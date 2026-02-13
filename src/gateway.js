@@ -13,6 +13,10 @@ const CONFIG_PATH = '/home/node/.openclaw/openclaw.json';
 const HEARTBEAT_INTERVAL = 30_000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
+const MAX_MESSAGE_SIZE = 65_536;  // 64 KB
+const RATE_LIMIT_MAX = 20;
+const RATE_LIMIT_WINDOW = 60_000; // 60 seconds
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -24,6 +28,39 @@ const MIME_TYPES = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
 };
+
+// --- Prometheus Metrics ---
+
+let connectionsActive = 0;
+let connectionsTotal = 0;
+let messagesTotal = 0;
+let errorsTotal = 0;
+let rateLimitedTotal = 0;
+
+function formatMetrics() {
+  return [
+    '# HELP openclaw_ws_connections_active Current open WebSocket connections',
+    '# TYPE openclaw_ws_connections_active gauge',
+    `openclaw_ws_connections_active ${connectionsActive}`,
+    '',
+    '# HELP openclaw_ws_connections_total Total WebSocket connections since start',
+    '# TYPE openclaw_ws_connections_total counter',
+    `openclaw_ws_connections_total ${connectionsTotal}`,
+    '',
+    '# HELP openclaw_ws_messages_total Total messages received',
+    '# TYPE openclaw_ws_messages_total counter',
+    `openclaw_ws_messages_total ${messagesTotal}`,
+    '',
+    '# HELP openclaw_ws_errors_total Total errors sent',
+    '# TYPE openclaw_ws_errors_total counter',
+    `openclaw_ws_errors_total ${errorsTotal}`,
+    '',
+    '# HELP openclaw_ws_rate_limited_total Total rate-limited rejections',
+    '# TYPE openclaw_ws_rate_limited_total counter',
+    `openclaw_ws_rate_limited_total ${rateLimitedTotal}`,
+    '',
+  ].join('\n');
+}
 
 function log(level, msg, extra = {}) {
   const entry = { ts: new Date().toISOString(), level, msg, ...extra };
@@ -103,6 +140,11 @@ wss.on('connection', (ws, req) => {
   ws.on('pong', heartbeat);
 
   const agent = new Agent(ollama, config, log);
+  const messageTimestamps = [];
+
+  connectionsActive++;
+  connectionsTotal++;
+
   log('info', 'Client connected', { ip: req.socket.remoteAddress });
 
   function send(obj) {
@@ -111,17 +153,44 @@ wss.on('connection', (ws, req) => {
     }
   }
 
+  function sendError(code, message) {
+    errorsTotal++;
+    send({ type: 'error', code, message });
+  }
+
   ws.on('message', (data) => {
+    // Message size check (before JSON.parse)
+    if (data.length > MAX_MESSAGE_SIZE) {
+      rateLimitedTotal++;
+      sendError('message_too_large', `Message exceeds maximum size of ${MAX_MESSAGE_SIZE} bytes`);
+      return;
+    }
+
+    // Rate limiting
+    const now = Date.now();
+    messageTimestamps.push(now);
+    // Remove timestamps outside the window
+    while (messageTimestamps.length > 0 && messageTimestamps[0] <= now - RATE_LIMIT_WINDOW) {
+      messageTimestamps.shift();
+    }
+    if (messageTimestamps.length > RATE_LIMIT_MAX) {
+      rateLimitedTotal++;
+      sendError('rate_limited', `Rate limit exceeded: max ${RATE_LIMIT_MAX} messages per ${RATE_LIMIT_WINDOW / 1000}s`);
+      return;
+    }
+
+    messagesTotal++;
+
     let msg;
     try {
       msg = JSON.parse(data);
     } catch {
-      send({ type: 'error', code: 'invalid_message', message: 'Invalid JSON' });
+      sendError('invalid_message', 'Invalid JSON');
       return;
     }
 
     if (!msg.type) {
-      send({ type: 'error', code: 'invalid_message', message: 'Missing type field' });
+      sendError('invalid_message', 'Missing type field');
       return;
     }
 
@@ -133,7 +202,7 @@ wss.on('connection', (ws, req) => {
 
     if (msg.type === 'message') {
       if (typeof msg.content !== 'string' || !msg.content.trim()) {
-        send({ type: 'error', code: 'invalid_message', message: 'Missing or empty content' });
+        sendError('invalid_message', 'Missing or empty content');
         return;
       }
 
@@ -142,15 +211,19 @@ wss.on('connection', (ws, req) => {
       agent.stream(msg.content, {
         onChunk: (text) => send({ type: 'chunk', content: text }),
         onDone: (usage) => send({ type: 'done', usage }),
-        onError: (err) => send({ type: 'error', code: err.code, message: err.message }),
+        onError: (err) => {
+          errorsTotal++;
+          send({ type: 'error', code: err.code, message: err.message });
+        },
       });
       return;
     }
 
-    send({ type: 'error', code: 'invalid_message', message: `Unknown type: ${msg.type}` });
+    sendError('invalid_message', `Unknown type: ${msg.type}`);
   });
 
   ws.on('close', (code, reason) => {
+    connectionsActive--;
     log('info', 'Client disconnected', { code, reason: reason.toString() });
   });
 });
@@ -174,6 +247,11 @@ const healthServer = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
+    return;
+  }
+  if (req.method === 'GET' && req.url === '/metrics') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+    res.end(formatMetrics());
     return;
   }
   res.writeHead(404);
@@ -211,4 +289,4 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-log('info', 'OpenClaw Gateway v0.4.0 started', { config: Object.keys(config) });
+log('info', 'OpenClaw Gateway v0.5.0 started', { config: Object.keys(config) });

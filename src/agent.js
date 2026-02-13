@@ -1,5 +1,7 @@
 'use strict';
 
+const MAX_HISTORY = 50;
+
 class Agent {
   constructor(client, config, logger) {
     this._client = client;
@@ -45,6 +47,10 @@ class Agent {
       }
 
       this._history.push({ role: 'assistant', content: assistantText });
+
+      if (this._history.length > MAX_HISTORY) {
+        this._history = this._history.slice(-MAX_HISTORY);
+      }
 
       onDone({
         input_tokens: inputTokens,

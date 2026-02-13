@@ -19,11 +19,44 @@ spec:
         app.kubernetes.io/component: inference
         app.kubernetes.io/part-of: openclaw
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: model-pull
+          image: ollama/ollama:0.16.0
+          command: ["/bin/sh", "-c"]
+          args: ["ollama serve & sleep 5 && ollama pull qwen2.5:14b && kill %1"]
+          env:
+            - name: OLLAMA_MODELS
+              value: /data/models
+          resources:
+            requests:
+              cpu: "1"
+              memory: "4Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
       containers:
         - name: ollama
-          image: ollama/ollama:latest
-          command: ["/bin/sh", "-c"]
-          args: ["ollama serve & sleep 5 && ollama pull qwen2.5:14b; wait"]
+          image: ollama/ollama:0.16.0
+          command: ["ollama", "serve"]
+          env:
+            - name: OLLAMA_MODELS
+              value: /data/models
           ports:
             - name: http
               containerPort: 11434
@@ -51,9 +84,13 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           volumeMounts:
             - name: ollama-data
-              mountPath: /root/.ollama
+              mountPath: /data
             - name: tmp
               mountPath: /tmp
       volumes:
