@@ -11,6 +11,8 @@ data:
     {
       "agent": {
         "model": "qwen2.5:14b",
+        "name": "OpenClaw",
+        "description": "AI assistant powered by Ollama",
         "sandbox": true
       },
       "workspace": "/home/node/.openclaw/workspace"
