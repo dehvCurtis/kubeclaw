@@ -9,6 +9,7 @@ class Agent {
     this._log = logger;
     this._history = [];
     this._busy = false;
+    this._abortController = null;
   }
 
   async stream(content, { onChunk, onDone, onError }) {
@@ -18,6 +19,7 @@ class Agent {
     }
 
     this._busy = true;
+    this._abortController = new AbortController();
     this._history.push({ role: 'user', content });
 
     try {
@@ -32,6 +34,10 @@ class Agent {
       let outputTokens = 0;
 
       for await (const part of response) {
+        if (this._abortController.signal.aborted) {
+          break;
+        }
+
         const chunk = part.message.content;
         if (chunk) {
           assistantText += chunk;
@@ -46,6 +52,13 @@ class Agent {
         }
       }
 
+      if (this._abortController.signal.aborted) {
+        // On abort: pop the user message, skip onDone
+        this._history.pop();
+        this._log('info', 'Stream aborted');
+        return;
+      }
+
       this._history.push({ role: 'assistant', content: assistantText });
 
       if (this._history.length > MAX_HISTORY) {
@@ -57,11 +70,23 @@ class Agent {
         output_tokens: outputTokens,
       });
     } catch (err) {
+      if (this._abortController.signal.aborted) {
+        this._history.pop();
+        this._log('info', 'Stream aborted during error');
+        return;
+      }
       this._history.pop();
       this._log('error', 'Stream error', { error: err.message });
       onError({ code: 'stream_error', message: err.message });
     } finally {
       this._busy = false;
+      this._abortController = null;
+    }
+  }
+
+  abort() {
+    if (this._abortController) {
+      this._abortController.abort();
     }
   }
 
