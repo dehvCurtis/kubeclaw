@@ -28,18 +28,6 @@ images:
 
 ## Deploy
 
-Two overlays are provided:
-
-```bash
-# Dev (1 replica, no HPA)
-kubectl apply -k k8s/overlays/dev/
-
-# Prod (2 replicas, HPA enabled)
-kubectl apply -k k8s/overlays/prod/
-```
-
-Or deploy the base directly:
-
 ```bash
 kubectl apply -k k8s/base/
 ```
@@ -63,14 +51,11 @@ kubectl get pods -n openclaw
 # Health check
 kubectl port-forward -n openclaw svc/openclaw-gateway 18790:18790
 curl localhost:18790
-
-# Metrics
-curl localhost:18790/metrics
 ```
 
 ## Architecture
 
-- **Gateway** (port 18789 WS, 18790 HTTP) — WebSocket server with rate limiting (20 msg/60s), 64KB message cap, Prometheus metrics
+- **Gateway** (port 18789 WS, 18790 HTTP) — WebSocket server with rate limiting (20 msg/60s), 64KB message cap
 - **Ollama** — runs as non-root (uid 1000), init container pulls the model, main container serves inference
-- **HPA** — autoscales gateway 2-5 replicas at 70% CPU (prod)
+- **HPA** — autoscales gateway 2-5 replicas at 70% CPU
 - **PDB** — `minAvailable: 1` for both gateway and Ollama
