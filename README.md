@@ -1,6 +1,6 @@
 # Kubeclaw
 
-WebSocket gateway + Ollama inference stack for Kubernetes.
+WebSocket gateway + Ollama inference stack for Kubernetes. The gateway speaks a JSON-RPC protocol over WebSocket, compatible with the OpenClaw Control UI.
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ WebSocket gateway + Ollama inference stack for Kubernetes.
 ## Build
 
 ```bash
-VERSION="0.5.0"
+VERSION="0.6.0"
 docker build --build-arg SERVICE_VERSION=${VERSION} -t <your-registry>/openclaw:${VERSION} .
 docker push <your-registry>/openclaw:${VERSION}
 ```
@@ -23,7 +23,7 @@ Update the image in `k8s/base/kustomization.yaml` to match your registry:
 images:
   - name: ghcr.io/openclaw/openclaw
     newName: <your-registry>/openclaw
-    newTag: "0.5.0"
+    newTag: "0.6.0"
 ```
 
 ## Deploy
@@ -43,6 +43,18 @@ kubectl -n openclaw create secret generic openclaw-secrets \
 
 Optional secret keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_TOKEN`, `SLACK_TOKEN`, `DISCORD_TOKEN`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`.
 
+Agent name and description can be set in the ConfigMap (`k8s/base/configmap.yaml`):
+
+```json
+{
+  "agent": {
+    "model": "qwen2.5:14b",
+    "name": "OpenClaw",
+    "description": "AI assistant powered by Ollama"
+  }
+}
+```
+
 ## Verify
 
 ```bash
@@ -59,3 +71,40 @@ curl localhost:18790
 - **Ollama** — runs as non-root (uid 1000), init container pulls the model, main container serves inference
 - **HPA** — autoscales gateway 2-5 replicas at 70% CPU
 - **PDB** — `minAvailable: 1` for both gateway and Ollama
+
+## WebSocket Protocol
+
+The gateway uses a JSON-RPC-like protocol over WebSocket:
+
+**Request** (client to server):
+```json
+{"type": "req", "id": "<uuid>", "method": "<name>", "params": {}}
+```
+
+**Response** (server to client):
+```json
+{"type": "res", "id": "<uuid>", "ok": true, "payload": {}}
+```
+
+**Server Event** (server to client):
+```json
+{"type": "event", "event": "<name>", "seq": 1, "payload": {}}
+```
+
+### RPC Methods
+
+| Method | Description |
+|--------|-------------|
+| `connect` | Handshake — returns session defaults |
+| `chat.send` | Send a message and stream the response |
+| `chat.history` | Retrieve chat history for a session |
+| `chat.abort` | Abort a running chat stream |
+| `agents.list` | List available agents |
+| `agent.identity.get` | Get agent identity |
+| `sessions.list` | List active sessions |
+| `sessions.patch` | Create or update a session |
+| `sessions.delete` | Delete a session |
+| `health` | Health check |
+| `status` | Server status and version |
+| `config.get` | Get server configuration |
+| `models.list` | List available models |

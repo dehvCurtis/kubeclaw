@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
 const { Ollama } = require('ollama');
-const { Agent } = require('./agent');
+const { SessionManager } = require('./sessions');
+const { RpcHandler } = require('./rpc');
 
 const WS_PORT = 18789;
 const HTTP_PORT = 18790;
@@ -106,10 +107,8 @@ wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.on('pong', heartbeat);
 
-  const agent = new Agent(ollama, config, log);
+  const sessionManager = new SessionManager(ollama, config, log);
   const messageTimestamps = [];
-
-  log('info', 'Client connected', { ip: req.socket.remoteAddress });
 
   function send(obj) {
     if (ws.readyState === ws.OPEN) {
@@ -117,26 +116,31 @@ wss.on('connection', (ws, req) => {
     }
   }
 
-  function sendError(code, message) {
-    send({ type: 'error', code, message });
-  }
+  const rpc = new RpcHandler(sessionManager, config, log, send);
+
+  log('info', 'Client connected', { ip: req.socket.remoteAddress });
 
   ws.on('message', (data) => {
     // Message size check (before JSON.parse)
     if (data.length > MAX_MESSAGE_SIZE) {
-      sendError('message_too_large', `Message exceeds maximum size of ${MAX_MESSAGE_SIZE} bytes`);
+      send({
+        type: 'res', id: null, ok: false,
+        error: { message: `Message exceeds maximum size of ${MAX_MESSAGE_SIZE} bytes` },
+      });
       return;
     }
 
     // Rate limiting
     const now = Date.now();
     messageTimestamps.push(now);
-    // Remove timestamps outside the window
     while (messageTimestamps.length > 0 && messageTimestamps[0] <= now - RATE_LIMIT_WINDOW) {
       messageTimestamps.shift();
     }
     if (messageTimestamps.length > RATE_LIMIT_MAX) {
-      sendError('rate_limited', `Rate limit exceeded: max ${RATE_LIMIT_MAX} messages per ${RATE_LIMIT_WINDOW / 1000}s`);
+      send({
+        type: 'res', id: null, ok: false,
+        error: { message: `Rate limit exceeded: max ${RATE_LIMIT_MAX} messages per ${RATE_LIMIT_WINDOW / 1000}s` },
+      });
       return;
     }
 
@@ -144,41 +148,26 @@ wss.on('connection', (ws, req) => {
     try {
       msg = JSON.parse(data);
     } catch {
-      sendError('invalid_message', 'Invalid JSON');
-      return;
-    }
-
-    if (!msg.type) {
-      sendError('invalid_message', 'Missing type field');
-      return;
-    }
-
-    if (msg.type === 'reset') {
-      agent.reset();
-      send({ type: 'done', usage: null });
-      return;
-    }
-
-    if (msg.type === 'message') {
-      if (typeof msg.content !== 'string' || !msg.content.trim()) {
-        sendError('invalid_message', 'Missing or empty content');
-        return;
-      }
-
-      log('info', 'Message received', { size: msg.content.length });
-
-      agent.stream(msg.content, {
-        onChunk: (text) => send({ type: 'chunk', content: text }),
-        onDone: (usage) => send({ type: 'done', usage }),
-        onError: (err) => send({ type: 'error', code: err.code, message: err.message }),
+      send({
+        type: 'res', id: null, ok: false,
+        error: { message: 'Invalid JSON' },
       });
       return;
     }
 
-    sendError('invalid_message', `Unknown type: ${msg.type}`);
+    if (!msg.type) {
+      send({
+        type: 'res', id: msg.id || null, ok: false,
+        error: { message: 'Missing type field' },
+      });
+      return;
+    }
+
+    rpc.dispatch(msg);
   });
 
   ws.on('close', (code, reason) => {
+    sessionManager.clear();
     log('info', 'Client disconnected', { code, reason: reason.toString() });
   });
 });
@@ -239,4 +228,4 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-log('info', 'OpenClaw Gateway v0.5.1 started', { config: Object.keys(config) });
+log('info', 'OpenClaw Gateway v0.6.0 started', { config: Object.keys(config) });

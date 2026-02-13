@@ -1,4 +1,4 @@
-ARG SERVICE_VERSION=0.5.1
+ARG SERVICE_VERSION=0.6.0
 
 # --- UI Builder ---
 FROM node:22-bookworm AS ui-builder
