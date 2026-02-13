@@ -10,7 +10,7 @@ data:
   openclaw.json: |
     {
       "agent": {
-        "model": "claude-sonnet-4-5-20250929",
+        "model": "qwen2.5:14b",
         "sandbox": true
       },
       "workspace": "/home/node/.openclaw/workspace"

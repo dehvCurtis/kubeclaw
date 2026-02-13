@@ -7,13 +7,30 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - configmap.yaml
-  - external-secret.yaml
   - deployment.yaml
   - service.yaml
   - pvc.yaml
+  - ollama-deployment.yaml
+  - ollama-service.yaml
+  - ollama-pvc.yaml
   - networkpolicy.yaml
   - certificate.yaml
   - ingressroute.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+secretGenerator:
+  - name: openclaw-secrets
+    literals:
+      - OPENCLAW_GATEWAY_TOKEN=
+      - OPENAI_API_KEY=
+      - ANTHROPIC_API_KEY=
+      - TELEGRAM_TOKEN=
+      - SLACK_TOKEN=
+      - DISCORD_TOKEN=
+      - OAUTH_CLIENT_ID=
+      - OAUTH_CLIENT_SECRET=
 
 labels:
   - pairs:
@@ -25,4 +42,4 @@ labels:
 images:
   - name: ghcr.io/openclaw/openclaw
     newName: harbor.blocksecops.local/blocksecops/openclaw
-    newTag: "0.1.0"
+    newTag: "0.4.0"
