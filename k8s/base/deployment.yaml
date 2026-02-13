@@ -44,11 +44,8 @@ spec:
                 secretKeyRef:
                   name: openclaw-secrets
                   key: OPENCLAW_GATEWAY_TOKEN
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-secrets
-                  key: ANTHROPIC_API_KEY
+            - name: OLLAMA_HOST
+              value: "http://ollama:11434"
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
